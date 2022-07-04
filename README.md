@@ -1,7 +1,7 @@
 # human-aware-waypoint
 
 
-## Algorithm workflow
+## Algorithm overview
 1. Detect corners of the static map using CV algorithms  
 
 2. Assign possible-collision areas to the corners 
