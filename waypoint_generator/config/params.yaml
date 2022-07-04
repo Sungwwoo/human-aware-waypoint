@@ -2,6 +2,9 @@ corner_detector:
   # map_file directory
   # map_file: 
 
+  # Show map image if True
+  show_image: False
+
   # Use contour approximation if true
   use_approximation: True
 
@@ -12,4 +15,8 @@ corner_detector:
   distance_threshold: 5
 
   # Determines the index of convex hull sorted by its area
-  convex_hull_idx: 2
+  convex_hull_idx: 2  
+  
+# global_plan topic name
+global_plan_name: /move_base/NavfnROS/plan
+  
