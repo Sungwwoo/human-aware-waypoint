@@ -3,7 +3,7 @@ corner_detector:
   # map_file: 
 
   # Show map image if True
-  show_image: False
+  show_image: True
 
   # Use contour approximation if true
   use_approximation: True

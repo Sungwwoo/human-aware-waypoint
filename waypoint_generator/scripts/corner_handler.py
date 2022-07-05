@@ -12,7 +12,6 @@ from geometry_msgs.msg import PoseStamped
 
 import numpy as np
 import cv2 as cv
-import cv_bridge
 import matplotlib.pyplot as plt
 
 
@@ -42,7 +41,7 @@ class CornerHandler:
         self.DISTANCE_THRESHOLD = rospy.get_param("/corner_detector/distance_threshold", default=5)
         self.CONVEX_HULL_IDX = rospy.get_param("/corner_detector/convex_hull_idx", default=2)
 
-        print(self.show_image)
+        rospy.loginfo("")
         # Load map image
         if self.map_file == "":
             rospy.logerr("No static map specified. Shutting down...")
@@ -52,8 +51,9 @@ class CornerHandler:
         else:
             rospy.logerr("Invalid map_file name. Map file must be end with '.yaml'")
             exit()
-        self.img = cv.imread(self.image_dir, cv.IMREAD_GRAYSCALE)
 
+        self.img = cv.imread(self.image_dir, cv.IMREAD_GRAYSCALE)
+        self.img = cv.rotate(self.img, cv.ROTATE_90_CLOCKWISE)
         # Load map data
         with open(self.map_file) as file:
             mapData = yaml.safe_load(file)
@@ -66,15 +66,6 @@ class CornerHandler:
         self.g_path = []
         self.global_goal = PoseStamped()
         self.cornerMarkers = MarkerArray()
-
-        # TODO
-        # Get map data from map_server
-        # rospy.wait_for_service("static_map")
-        # try:
-        #     get_map = rospy.ServiceProxy("static_map", GetMap)
-        #     self._map = get_map().map
-        # except rospy.ServiceException as e:
-        #     rospy.logerr("Map service call failed: %s" % e)
 
         self.pub_markers = rospy.Publisher("corner_markers", MarkerArray, queue_size=10)
         rospy.loginfo("Corner Detector Initialized")
@@ -146,7 +137,7 @@ class CornerHandler:
                     img = cv.circle(img, (int(i[0]), int(i[1])), 4, (0, 0, 255), 1)
                 # Map the corner to the world coordinate
                 i[0] *= self.map_resolution  # resolution: meter/pixel
-                i[1] *= self.map_resolution
+                i[1] *= self.map_resolution  # resolution: meter/pixel
 
                 # Align to the origin
                 i[0] += self.map_origin[0]
@@ -172,8 +163,8 @@ class CornerHandler:
             marker.scale.x = 0.5
             marker.scale.y = 0.5
             marker.scale.z = 0.1
-            marker.pose.position.x = self.corners[i][0]
-            marker.pose.position.y = self.corners[i][1]
+            marker.pose.position.x = self.corners[i][1]
+            marker.pose.position.y = self.corners[i][0]
             marker.pose.position.z = 0.0
             [marker.pose.orientation.x, marker.pose.orientation.y, marker.pose.orientation.z, marker.pose.orientation.w] = orientation
             marker.color.r, marker.color.g, marker.color.b = 1, 1, 0
@@ -207,10 +198,10 @@ class CornerHandler:
 
         return
 
-    def init(self):
+    def computeArea(self):
         self.extractCorners()
         self.createAvoidingArea()
-        self.getPathandGoal()
+        # self.getPathandGoal()
 
     def run(self):
         self.pub_markers.publish(self.cornerMarkers)
@@ -227,7 +218,7 @@ if __name__ == "__main__":
 
     cornerHandler = CornerHandler()
 
-    cornerHandler.init()
+    cornerHandler.computeArea()
 
     while not rospy.is_shutdown():
         cornerHandler.run()
