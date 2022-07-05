@@ -12,9 +12,8 @@
 4. If the robot enters the possible-collision area, back up the global goal and follow the boundary of the area using sequence of waypoints.
 
 ## Process
-### Decisions to be made
-- Map loading method: Directly loading .pgm / Get occupancy grid data from map_server
-- Door detection algorithm: lidar-based / depth camera-based / both
+### Main Contribution?
+
 ### TODO
 
 - [x] Corner detection
