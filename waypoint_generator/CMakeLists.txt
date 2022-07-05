@@ -2,13 +2,13 @@ cmake_minimum_required(VERSION 3.0.2)
 project(waypoint_generator)
 
 find_package(catkin REQUIRED COMPONENTS
-  rospy cv_bridge geometry_msgs sensor_msgs std_msgs move_base_msgs nav_msgs
+  rospy geometry_msgs sensor_msgs std_msgs move_base_msgs nav_msgs
 )
 catkin_package(
 
   # INCLUDE_DIRS include
   # LIBRARIES autorace
-  CATKIN_DEPENDS cv_bridge geometry_msgs rospy sensor_msgs std_msgs move_base_msgs nav_msgs
+  CATKIN_DEPENDS geometry_msgs rospy sensor_msgs std_msgs move_base_msgs nav_msgs
 
   # DEPENDS system_lib
 )
