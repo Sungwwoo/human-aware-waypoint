@@ -1,9 +1,7 @@
 corner_detector:
-  # map_file directory
-  # map_file: 
 
   # Show map image if True
-  show_image: True
+  show_image: False
 
   # Use contour approximation if true
   use_approximation: True
@@ -16,7 +14,13 @@ corner_detector:
 
   # Determines the index of convex hull sorted by its area
   convex_hull_idx: 2  
-  
+
+corner_avoid:
+  # Corners closer than this value to the global path will be avoided
+  corner_distance_threshold: 0.7
+
 # global_plan topic name
 global_plan_name: /move_base/NavfnROS/plan
-  
+
+# global_goal topic name with PoseStamped msg type
+global_goal_name: /move_base/current_goal
