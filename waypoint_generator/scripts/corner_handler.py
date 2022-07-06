@@ -1,3 +1,5 @@
+#! /usr/bin/env python3
+
 from math import sqrt, cos, sin
 import sys
 import yaml
@@ -29,31 +31,37 @@ def getTF(target_frame, source_frame):
             continue
 
 
+def getDistance(a=[], b=[]):
+    return sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
+
+
 class CornerHandler:
     def __init__(self):
 
         # Load params
         self.global_plan_name = rospy.get_param("/global_plan_name", default="/move_base/NavfnROS/plan")
+        self.global_goal_name = rospy.get_param("/global_goal_name", default="/move_base/current_goal")
         self.map_file = rospy.get_param("/corner_detector/map_file", default="")
         self.show_image = rospy.get_param("/corner_detector/show_image", default=False)
         self.USE_APPROXIMATION = rospy.get_param("/corner_detector/use_approximation", default=True)
         self.APPROX_PARAM = rospy.get_param("/corner_detector/approx_param", default=0.005)
         self.DISTANCE_THRESHOLD = rospy.get_param("/corner_detector/distance_threshold", default=5)
         self.CONVEX_HULL_IDX = rospy.get_param("/corner_detector/convex_hull_idx", default=2)
+        self.CORNER_DIST_THRES = rospy.get_param("corner_avoid/corner_distance_threshold", default=0.7)
 
         rospy.loginfo("")
         # Load map image
         if self.map_file == "":
-            rospy.logerr("No static map specified. Shutting down...")
+            rospy.logerr("No static map specified. Use same map file with navigation stack.")
             exit()
         if self.map_file[-5:] == ".yaml":
             self.image_dir = self.map_file[:-5] + ".pgm"
         else:
-            rospy.logerr("Invalid map_file name. Map file must be end with '.yaml'")
+            rospy.logerr("Invalid map_file name. Map file must be end with '.yaml'.")
             exit()
 
         self.img = cv.imread(self.image_dir, cv.IMREAD_GRAYSCALE)
-        self.img = cv.rotate(self.img, cv.ROTATE_90_CLOCKWISE)
+
         # Load map data
         with open(self.map_file) as file:
             mapData = yaml.safe_load(file)
@@ -64,10 +72,15 @@ class CornerHandler:
         self.extracted = False
         self.corners = []
         self.g_path = []
+        self.inRangeCorners = []
         self.global_goal = PoseStamped()
         self.cornerMarkers = MarkerArray()
 
         self.pub_markers = rospy.Publisher("corner_markers", MarkerArray, queue_size=10)
+
+        self.sub_globalPath = rospy.Subscriber(self.global_plan_name, Path, self.cbGlobalPath)
+        self.sub_globalGoal = rospy.Subscriber("/move_base/current_goal", PoseStamped, self.cbGlobalGoal)
+
         rospy.loginfo("Corner Detector Initialized")
 
     def extractCorners(self):
@@ -121,6 +134,8 @@ class CornerHandler:
         # Extract convex hull points
         for point in hull:
             for data in point:
+                if self.show_image:
+                    self.final_img = cv.circle(img, data, 4, (0, 0, 255), 1)
                 cnvxPoints.append(data)
 
         # Remove contour points from convex hull points
@@ -132,9 +147,12 @@ class CornerHandler:
                     isValid = False
                     break
             if isValid:
+
                 i = i.astype(np.float32)
+
                 if self.show_image:
-                    img = cv.circle(img, (int(i[0]), int(i[1])), 4, (0, 0, 255), 1)
+                    img = cv.circle(img, (int(i[0]), int(i[1])), 4, (0, 255, 0), 1)
+
                 # Map the corner to the world coordinate
                 i[0] *= self.map_resolution  # resolution: meter/pixel
                 i[1] *= self.map_resolution  # resolution: meter/pixel
@@ -142,11 +160,19 @@ class CornerHandler:
                 # Align to the origin
                 i[0] += self.map_origin[0]
                 i[1] += self.map_origin[1]
+
+                i[1] = -i[1]
                 self.corners.append(i)
+
         if self.corners == []:
             self.extracted = False
         else:
             self.extracted = True
+
+        # Save corners for debug
+        # with open("corners.txt", "w") as fileWrite:
+        #     for point in self.corners:
+        #         fileWrite.write(str(point[0]) + "\t" + str(point[1]) + "\n")
 
         rospy.loginfo("Creating markers")
         # Create Markers
@@ -163,8 +189,8 @@ class CornerHandler:
             marker.scale.x = 0.5
             marker.scale.y = 0.5
             marker.scale.z = 0.1
-            marker.pose.position.x = self.corners[i][1]
-            marker.pose.position.y = self.corners[i][0]
+            marker.pose.position.x = self.corners[i][0]
+            marker.pose.position.y = self.corners[i][1]
             marker.pose.position.z = 0.0
             [marker.pose.orientation.x, marker.pose.orientation.y, marker.pose.orientation.z, marker.pose.orientation.w] = orientation
             marker.color.r, marker.color.g, marker.color.b = 1, 1, 0
@@ -173,43 +199,55 @@ class CornerHandler:
 
         return self.extracted
 
+    def cbGlobalPath(self, path):
+        rospy.loginfo("Received Global Path")
+        x, y = [], []
+        for data in path.poses:
+            x.append(-data.pose.position.y)
+            y.append(data.pose.position.x)
+        tempList = []
+        for i in range(0, len(x)):
+            tempList.append([x[i], y[i]])
+        self.g_path = tempList[:]
+
+        self.checkPath()
+
+    def cbGlobalGoal(self, goal):
+        rospy.loginfo("Received Global Goal")
+        goal_x = -goal.pose.position.y
+        goal_y = goal.pose.position.x
+        self.global_goal = [goal_x, goal_y]
+
     def pubMarkers(self):
         self.pub_markers.publish(self.cornerMarkers)
 
-    def createAvoidingArea(self):
-
-        return
-
-    def getPathandGoal(self):
-        rospy.loginfo("Waiting for global plan to be published...")
-        g_path = rospy.wait_for_message(self.global_plan_name, Path)
-        for data in g_path.poses:
-            point = []
-            point.append(data.pose.position.x)
-            point.append(data.pose.position.y)
-            self.g_path.append(point)
-        return self.g_path
-
     def checkPath(self):
-
+        for corner in self.corners:
+            for point in self.g_path:
+                if getDistance(corner, point) < self.CORNER_DIST_THRES:
+                    self.inRangeCorners.append(corner)
         return
 
     def avoidArea(self):
-
         return
+
+    def getRobotLocation(self):
+        loc = getTF("map", "base_link")
+        self.robotLocation = [loc.transform.translation.x, loc.transform.translation.y]
+        return self.robotLocation
 
     def computeArea(self):
         self.extractCorners()
-        self.createAvoidingArea()
-        # self.getPathandGoal()
-
-    def run(self):
-        self.pub_markers.publish(self.cornerMarkers)
 
         if self.show_image:
             cv.namedWindow("Contour", cv.WINDOW_NORMAL)
             cv.resizeWindow("Contour", width=1000, height=1000)
             cv.imshow("Contour", self.final_img), cv.waitKey(1)
+
+    def run(self):
+        self.pub_markers.publish(self.cornerMarkers)
+        self.getRobotLocation()
+
         return
 
 

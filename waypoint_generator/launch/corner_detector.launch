@@ -4,10 +4,10 @@
     <!-- Load Params -->
     <rosparam command="load" file="$(find waypoint_generator)/config/params.yaml" />
     
-    <!-- Location of pgm file -->
+    <!-- Use same map file with navigation stack -->
     <arg name="map_file" default="$(find husky_ur3_navigation)/map/doors.yaml"/>
 
-    
+    <!-- Launch Node -->
     <node name="corner_detector" pkg="waypoint_generator" type="corner_handler.py" output="screen">
         <param name="map_file" value="$(arg map_file)"/>
     </node>
