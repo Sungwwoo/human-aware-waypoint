@@ -61,7 +61,7 @@ class CornerHandler:
             exit()
 
         self.img = cv.imread(self.image_dir, cv.IMREAD_GRAYSCALE)
-        self.img = cv.rotate(self.img, cv.ROTATE_90_CLOCKWISE)
+
         # Load map data
         with open(self.map_file) as file:
             mapData = yaml.safe_load(file)
@@ -147,10 +147,7 @@ class CornerHandler:
                     isValid = False
                     break
             if isValid:
-                # Change x, y values to map the corners with ros world coordinate
-                tmp = i[0]
-                i[0] = i[1]
-                i[1] = tmp
+
                 i = i.astype(np.float32)
 
                 if self.show_image:
@@ -163,6 +160,8 @@ class CornerHandler:
                 # Align to the origin
                 i[0] += self.map_origin[0]
                 i[1] += self.map_origin[1]
+
+                i[1] = -i[1]
                 self.corners.append(i)
 
         if self.corners == []:
@@ -230,19 +229,25 @@ class CornerHandler:
         return
 
     def avoidArea(self):
-
         return
+
+    def getRobotLocation(self):
+        loc = getTF("map", "base_link")
+        self.robotLocation = [loc.transform.translation.x, loc.transform.translation.y]
+        return self.robotLocation
 
     def computeArea(self):
         self.extractCorners()
-
-    def run(self):
-        self.pub_markers.publish(self.cornerMarkers)
 
         if self.show_image:
             cv.namedWindow("Contour", cv.WINDOW_NORMAL)
             cv.resizeWindow("Contour", width=1000, height=1000)
             cv.imshow("Contour", self.final_img), cv.waitKey(1)
+
+    def run(self):
+        self.pub_markers.publish(self.cornerMarkers)
+        self.getRobotLocation()
+
         return
 
 
