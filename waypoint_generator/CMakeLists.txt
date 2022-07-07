@@ -4,6 +4,7 @@ project(waypoint_generator)
 find_package(catkin REQUIRED COMPONENTS
   rospy geometry_msgs sensor_msgs std_msgs move_base_msgs nav_msgs
 )
+catkin_python_setup()
 catkin_package(
 
   # INCLUDE_DIRS include
@@ -12,8 +13,9 @@ catkin_package(
 
   # DEPENDS system_lib
 )
+
 catkin_install_python(PROGRAMS
-  scripts/corner_handler.py
+  scripts/corner_avoid.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

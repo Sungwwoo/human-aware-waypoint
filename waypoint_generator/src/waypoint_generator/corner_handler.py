@@ -11,7 +11,8 @@ from visualization_msgs.msg import Marker, MarkerArray
 from nav_msgs.msg import OccupancyGrid, Path
 from nav_msgs.srv import GetMap
 from geometry_msgs.msg import PoseStamped
-
+from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
+import actionlib
 import numpy as np
 import cv2 as cv
 import matplotlib.pyplot as plt
@@ -35,21 +36,23 @@ def getDistance(a=[], b=[]):
     return sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
 
 
+def toRad(degree):
+    return float(degree) * np.pi / 180.0
+
+
 class CornerHandler:
     def __init__(self):
 
         # Load params
-        self.global_plan_name = rospy.get_param("/global_plan_name", default="/move_base/NavfnROS/plan")
-        self.global_goal_name = rospy.get_param("/global_goal_name", default="/move_base/current_goal")
         self.map_file = rospy.get_param("/corner_detector/map_file", default="")
         self.show_image = rospy.get_param("/corner_detector/show_image", default=False)
         self.USE_APPROXIMATION = rospy.get_param("/corner_detector/use_approximation", default=True)
         self.APPROX_PARAM = rospy.get_param("/corner_detector/approx_param", default=0.005)
         self.DISTANCE_THRESHOLD = rospy.get_param("/corner_detector/distance_threshold", default=5)
         self.CONVEX_HULL_IDX = rospy.get_param("/corner_detector/convex_hull_idx", default=2)
-        self.CORNER_DIST_THRES = rospy.get_param("corner_avoid/corner_distance_threshold", default=0.7)
 
-        rospy.loginfo("")
+        rospy.loginfo("Parameter loaded")
+
         # Load map image
         if self.map_file == "":
             rospy.logerr("No static map specified. Use same map file with navigation stack.")
@@ -73,13 +76,21 @@ class CornerHandler:
         self.corners = []
         self.g_path = []
         self.inRangeCorners = []
+        self.waypoint = []
         self.global_goal = PoseStamped()
         self.cornerMarkers = MarkerArray()
-
+        self.waypointMarker = MarkerArray()
         self.pub_markers = rospy.Publisher("corner_markers", MarkerArray, queue_size=10)
+        rospy.sleep(1)
 
-        self.sub_globalPath = rospy.Subscriber(self.global_plan_name, Path, self.cbGlobalPath)
-        self.sub_globalGoal = rospy.Subscriber("/move_base/current_goal", PoseStamped, self.cbGlobalGoal)
+        rospy.loginfo("Deleting existing RVIZ markers")
+        delete_marker = MarkerArray()
+        marker = Marker()
+        marker.id = 0
+        marker.action = Marker.DELETEALL
+        delete_marker.markers.append(marker)
+        self.pub_markers.publish(delete_marker)
+        del delete_marker
 
         rospy.loginfo("Corner Detector Initialized")
 
@@ -192,12 +203,39 @@ class CornerHandler:
             marker.pose.position.x = self.corners[i][0]
             marker.pose.position.y = self.corners[i][1]
             marker.pose.position.z = 0.0
+            marker.lifetime = rospy.Duration(0)
             [marker.pose.orientation.x, marker.pose.orientation.y, marker.pose.orientation.z, marker.pose.orientation.w] = orientation
             marker.color.r, marker.color.g, marker.color.b = 1, 1, 0
             marker.color.a = 0.5
             self.cornerMarkers.markers.append(marker)
 
         return self.extracted
+
+    def pubMarkers(self):
+        self.pub_markers.publish(self.cornerMarkers)
+
+    def run(self):
+        self.extractCorners()
+        self.pubMarkers()
+
+        if self.show_image:
+            cv.namedWindow("Contour", cv.WINDOW_NORMAL)
+            cv.resizeWindow("Contour", width=1000, height=1000)
+            cv.imshow("Contour", self.final_img), cv.waitKey(1)
+
+
+class CornerAvoider:
+    def __init__(self):
+        self.global_plan_name = rospy.get_param("/global_plan_name", default="/move_base/NavfnROS/plan")
+        self.global_goal_name = rospy.get_param("/global_goal_name", default="/move_base/current_goal")
+        self.CORNER_DIST_THRES = rospy.get_param("corner_avoid/corner_distance_threshold", default=0.7)
+
+        self.waypointMarker = MarkerArray()
+
+    def is_waypoint(self, goal=[]):
+        # for point in self.waypoint:
+
+        return False
 
     def cbGlobalPath(self, path):
         rospy.loginfo("Received Global Path")
@@ -212,23 +250,87 @@ class CornerHandler:
 
         self.checkPath()
 
-    def cbGlobalGoal(self, goal):
+    def cbGlobalGoal(self, data):
         rospy.loginfo("Received Global Goal")
-        goal_x = -goal.pose.position.y
-        goal_y = goal.pose.position.x
-        self.global_goal = [goal_x, goal_y]
+        goal = [data.pose.position.x, data.pose.position.y]
+        if self.is_waypoint(goal):
+            return
+        else:
+            self.global_goal = goal
 
-    def pubMarkers(self):
-        self.pub_markers.publish(self.cornerMarkers)
+        # TODO: Check distance between in-range-corner and robot
 
-    def checkPath(self):
-        for corner in self.corners:
-            for point in self.g_path:
-                if getDistance(corner, point) < self.CORNER_DIST_THRES:
-                    self.inRangeCorners.append(corner)
+    def checkDistance(self, corner):
+        """check distance between robot and corner"""
+
+        # Get robot location
+        self.getRobotLocation()
+
+        # Calculate distance for in-range-corners
+
+        # Create waypoint if needed
+        self.createWaypoint()
+
         return
 
-    def avoidArea(self):
+    # TODO: Calculate Arc Length
+    def checkArcLength(self):
+        return
+
+    def createWaypoint(self, center=[], radius=1, stepsize=15):
+
+        waypoint = []
+        rads = np.arange(-3.14, 3.14, toRad(stepsize))
+        id = 0
+
+        # Creating circular waypoints
+        for theta in rads:
+            position = [center[0] + radius * np.cos(theta), center[1] + radius * np.sin(theta), 0.0]
+            orientation = quaternion_from_euler(0, 0, (theta + np.pi / 2.0))
+            point = [position, orientation]
+            waypoint.append(point)
+
+        # TODO: Choose waypoint based on arc length
+
+        for i in range(0, len(waypoint)):
+            marker = Marker()
+            marker.header.frame_id = "odom"
+            # marker.header.stamp = time
+            marker.id = i
+            marker.type = Marker.ARROW
+            marker.action = Marker.ADD
+            marker.scale.x = 0.1
+            marker.scale.y = 0.02
+            marker.scale.z = 0.02
+            marker.pose.position.x = waypoint[i][0][0]
+            marker.pose.position.y = waypoint[i][0][1]
+            marker.pose.position.z = 0.0
+            marker.lifetime = rospy.Duration(0)
+            [marker.pose.orientation.x, marker.pose.orientation.y, marker.pose.orientation.z, marker.pose.orientation.w] = waypoint[i][1]
+            marker.color.r, marker.color.g, marker.color.b = 1, 1, 0
+            marker.color.a = 0.5
+            self.waypointMarker.markers.append(marker)
+
+        return waypoint
+
+    def setWaypoint(self, point):
+        """Set waypoint and send to the actionlib, and wait until the action is done"""
+        client = actionlib.SimpleActionClient("move_base", MoveBaseAction)
+        client.wait_for_server()
+
+        goal = MoveBaseGoal()
+        goal.target_pose.header.frame_id = "odom"
+        goal.target_pose.pose.position.x = point[0][0]
+        goal.target_pose.pose.position.y = point[0][1]
+        goal.target_pose.pose.position.z = 0.0
+        goal.target_pose.pose.orientation.x = point[1][0]
+        goal.target_pose.pose.orientation.y = point[1][1]
+        goal.target_pose.pose.orientation.z = point[1][2]
+        goal.target_pose.pose.orientation.w = point[1][3]
+
+        client.send_goal(goal)
+        client.wait_for_result()
+
         return
 
     def getRobotLocation(self):
@@ -236,27 +338,9 @@ class CornerHandler:
         self.robotLocation = [loc.transform.translation.x, loc.transform.translation.y]
         return self.robotLocation
 
-    def computeArea(self):
-        self.extractCorners()
-
-        if self.show_image:
-            cv.namedWindow("Contour", cv.WINDOW_NORMAL)
-            cv.resizeWindow("Contour", width=1000, height=1000)
-            cv.imshow("Contour", self.final_img), cv.waitKey(1)
-
-    def run(self):
-        self.pub_markers.publish(self.cornerMarkers)
-        self.getRobotLocation()
-
+    def checkPath(self):
+        for corner in self.corners:
+            for point in self.g_path:
+                if getDistance(corner, point) < self.CORNER_DIST_THRES:
+                    self.inRangeCorners.append(corner)
         return
-
-
-if __name__ == "__main__":
-    rospy.init_node("waypoint_generator", disable_signals=True)
-
-    cornerHandler = CornerHandler()
-
-    cornerHandler.computeArea()
-
-    while not rospy.is_shutdown():
-        cornerHandler.run()
