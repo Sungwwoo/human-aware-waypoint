@@ -56,7 +56,6 @@ class CornerHandler:
         self.CORNER_DIST_THRES = rospy.get_param("corner_avoid/corner_distance_threshold", default=0.7)
         self.CORNER_AVOID_RADIUS = rospy.get_param("corner_avoid/radius", default=1.0)
         self.WAYPOINT_STEPSIZE = rospy.get_param("corner_avoid/step_size", default=15)
-        self.waypointMarker = MarkerArray()
 
         rospy.loginfo("Parameter loaded")
 
@@ -82,12 +81,15 @@ class CornerHandler:
         self.extracted = False
         self.corners = []
         self.g_path = []
-        self.inRangeCorners = []
-        self.waypoint = []
+        self.waypointArray = []
         self.global_goal = PoseStamped()
+        self.currentGoal = PoseStamped()
         self.cornerMarkers = MarkerArray()
         self.waypointMarker = MarkerArray()
-        self.pub_markers = rospy.Publisher("corner_markers", MarkerArray, queue_size=10)
+        self.pub_c_markers = rospy.Publisher("corner_markers", MarkerArray, queue_size=10)
+        self.pub_w_markers = rospy.Publisher("waypoint_markers", MarkerArray, queue_size=10)
+        self.sub_global_path = rospy.Subscriber(self.global_plan_name, Path, self.cbGlobalPath)
+        self.sub_global_goal = rospy.Subscriber(self.global_goal_name, PoseStamped, self.cbGlobalGoal)
         rospy.sleep(1)
 
         rospy.loginfo("Deleting existing RVIZ markers")
@@ -96,7 +98,7 @@ class CornerHandler:
         marker.id = 0
         marker.action = Marker.DELETEALL
         delete_marker.markers.append(marker)
-        self.pub_markers.publish(delete_marker)
+        self.pub_c_markers.publish(delete_marker)
         del delete_marker
 
         if self.show_image:
@@ -180,7 +182,6 @@ class CornerHandler:
                 i[0] *= self.map_resolution  # resolution: meter/pixel
                 i[1] *= self.map_resolution  # resolution: meter/pixel
 
-                # Align to the origin
                 i[0] += self.map_origin[0]
                 i[1] += self.map_origin[1]
 
@@ -198,7 +199,7 @@ class CornerHandler:
         #         fileWrite.write(str(point[0]) + "\t" + str(point[1]) + "\n")
 
         rospy.loginfo("Creating markers")
-        # Create Markers
+        # Create Corner Markers
         orientation = quaternion_from_euler(0, 0, self.map_origin[2])
         time = rospy.Time.now()
 
@@ -206,6 +207,7 @@ class CornerHandler:
             marker = Marker()
             marker.header.frame_id = "map"
             # marker.header.stamp = time
+            marker.ns = "corners"
             marker.id = i
             marker.type = Marker.CYLINDER
             marker.action = Marker.ADD
@@ -216,16 +218,13 @@ class CornerHandler:
             marker.pose.position.y = self.corners[i][1]
             marker.pose.position.z = 0.0
             marker.lifetime = rospy.Duration(0)
-            [marker.pose.orientation.x, marker.pose.orientation.y, marker.pose.orientation.z, marker.pose.orientation.w] = orientation
+            marker.pose.orientation.x, marker.pose.orientation.y, marker.pose.orientation.z, marker.pose.orientation.w = orientation
             marker.color.r, marker.color.g, marker.color.b = 1, 1, 0
             marker.color.a = 0.5
             self.cornerMarkers.markers.append(marker)
 
+        self.pub_c_markers.publish(self.cornerMarkers)
         return self.extracted
-
-    def pubMarkers(self):
-        """Publish corner marker array."""
-        self.pub_markers.publish(self.cornerMarkers)
 
     def getRobotLocation(self):
         """Return the current location of robot.
@@ -238,43 +237,79 @@ class CornerHandler:
         return self.robotLocation
 
     def checkPath(self):
+        """Find the corners need to be avoided
+
+        Return:
+            List of the corners
+        """
+        inRangeCorners = []
         for corner in self.corners:
             for point in self.g_path:
                 if calcDistance(corner, point) < self.CORNER_DIST_THRES:
-                    self.inRangeCorners.append(corner)
-        return
+                    inRangeCorners.append(corner)
+                    break
+        return inRangeCorners
 
-    def is_waypoint(self, goal: list):
+    def is_waypoint(self, goal: PoseStamped):
         """Check if the received move_base goal is one of the waypoints.
 
         Args:
-            goal: Received goal, [x, y]
+            goal: Received goal [x, y]
 
         Returns:
             Boolean
         """
-        # for point in self.waypoint:
-        if self.global_goal == goal:
-            return True
-        else:
+
+        if self.waypointArray == []:
             return False
+        for waypoint in self.waypointArray:
+            for point in waypoint[1]:
+                if point.pose == goal:
+                    return True
+                else:
+                    continue
+        return False
 
     def cbGlobalPath(self, path):
         rospy.loginfo("Received Global Path")
         x, y = [], []
+
+        if self.is_waypoint(self.currentGoal):
+            rospy.loginfo("Received goal belongs to waypoint array")
+            return
+
+        delete_marker = MarkerArray()
+        marker = Marker()
+        marker.id = 0
+        marker.action = Marker.DELETEALL
+        delete_marker.markers.append(marker)
+        self.pub_w_markers.publish(delete_marker)
+        
         for data in path.poses:
-            x.append(-data.pose.position.y)
-            y.append(data.pose.position.x)
+            x.append(data.pose.position.x)
+            y.append(data.pose.position.y)
         tempList = []
         for i in range(0, len(x)):
             tempList.append([x[i], y[i]])
+
         self.g_path = tempList[:]
+        self.waypointMarker = MarkerArray()
+        self.waypointArray = []
 
-        self.checkPath()
+        inRangeCorners = self.checkPath()
 
-    def cbGlobalGoal(self, data):
+        msg = "Creating waypoint for " + str(len(inRangeCorners)) + " corners"
+        rospy.loginfo(msg)
+        # Set new waypoint array
+        for corner in inRangeCorners:
+            lst = [corner, self.createWaypoint(corner, self.CORNER_AVOID_RADIUS, self.WAYPOINT_STEPSIZE)]
+            self.waypointArray.append(lst)
+
+        self.pub_w_markers.publish(self.waypointMarker)
+
+    def cbGlobalGoal(self, goal):
         rospy.loginfo("Received Global Goal")
-        goal = [data.pose.position.x, data.pose.position.y]
+        self.currentGoal = goal.pose
         if self.is_waypoint(goal):
             return
         else:
@@ -291,9 +326,10 @@ class CornerHandler:
         Return:
 
         """
-        for corner in corners:
-            if calcDistance(corner, self.getRobotLocation()) < 0.2:
-                self.filterWaypoint(corner)
+
+        # for corner in corners:
+        #     if calcDistance(corner, self.getRobotLocation()) < 0.2:
+        #         self.filterWaypoint(corner)
 
         return
 
@@ -318,30 +354,36 @@ class CornerHandler:
 
         # Create circular waypoints
         for theta in rads:
-            position = [center[0] + radius * np.cos(theta), center[1] + radius * np.sin(theta), 0.0]
-            orientation = quaternion_from_euler(0, 0, (theta + np.pi / 2.0))
-            point = [position, orientation]
+            point = PoseStamped()
+            point.pose.position.x, point.pose.position.y, point.pose.position.z = [
+                center[0] + radius * np.cos(theta),
+                center[1] + radius * np.sin(theta),
+                0.0,
+            ]
+            [point.pose.orientation.x, point.pose.orientation.y, point.pose.orientation.z, point.pose.orientation.w] = quaternion_from_euler(
+                0, 0, (theta + np.pi / 2.0)
+            )
             waypoint.append(point)
 
         self.setWaypointDirection(waypoint)
 
+        # Create Waypoint Markers
         for i in range(0, len(waypoint)):
             marker = Marker()
-            marker.header.frame_id = "odom"
+            marker.header.frame_id = "map"
             # marker.header.stamp = time
+            marker.ns = "waypoint" + str(center[0] + center[1])
             marker.id = i
             marker.type = Marker.ARROW
             marker.action = Marker.ADD
             marker.scale.x = 0.1
-            marker.scale.y = 0.02
-            marker.scale.z = 0.02
-            marker.pose.position.x = waypoint[i][0][0]
-            marker.pose.position.y = waypoint[i][0][1]
-            marker.pose.position.z = 0.0
+            marker.scale.y = 0.05
+            marker.scale.z = 0.05
+            marker.pose.position = waypoint[i].pose.position
             marker.lifetime = rospy.Duration(0)
-            [marker.pose.orientation.x, marker.pose.orientation.y, marker.pose.orientation.z, marker.pose.orientation.w] = waypoint[i][1]
-            marker.color.r, marker.color.g, marker.color.b = 1, 1, 0
-            marker.color.a = 0.5
+            marker.pose.orientation = waypoint[i].pose.orientation
+            marker.color.r, marker.color.g, marker.color.b = 1, 0, 0
+            marker.color.a = 0.7
             self.waypointMarker.markers.append(marker)
         return waypoint
 
@@ -374,4 +416,3 @@ class CornerHandler:
 
     def prepare(self):
         self.extractCorners()
-        self.pubMarkers()
