@@ -21,6 +21,6 @@ TBD
 - [ ] Create possible-collision areas for corners
 - [ ] Door detection
 - [ ] Door localization
-- [ ] Create possible-collision areas for doors
+- [X] Create possible-collision areas for doors
 - [ ] Check if the robot is entering possible-collision areas
 - [ ] Area Avoidance algorithm
