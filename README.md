@@ -18,9 +18,9 @@ TBD
 
 - [x] Corner detection
 - [X] Map the detected corner with world coordinate and visualize corners with RVIZ (Corner localization)
-- [ ] Create possible-collision areas for corners
+- [X] Create possible-collision areas for corners
 - [ ] Door detection
 - [ ] Door localization
-- [X] Create possible-collision areas for doors
+- [ ] Create possible-collision areas for doors
 - [ ] Check if the robot is entering possible-collision areas
 - [ ] Area Avoidance algorithm
