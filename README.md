@@ -18,7 +18,7 @@ TBD
 
 - [x] Corner detection
 - [X] Map the detected corner with world coordinate and visualize corners with RVIZ (Corner localization)
-- [ ] Create possible-collision areas for corners
+- [X] Create possible-collision areas for corners
 - [ ] Door detection
 - [ ] Door localization
 - [ ] Create possible-collision areas for doors
