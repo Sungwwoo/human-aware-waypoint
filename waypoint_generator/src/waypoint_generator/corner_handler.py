@@ -19,7 +19,13 @@ import numpy as np
 import cv2 as cv
 import matplotlib.pyplot as plt
 
+CORNER_LOCATION = 0
+CORNER_ORIENTATION = 1
+POINT_IN = 2
+POINT_OUT = 3
+WAYPOINT = 4
 
+# Logging functions
 def ROSINFO(msg):
     rospy.loginfo(msg)
 
@@ -28,8 +34,12 @@ def ROSERR(msg):
     rospy.logerr(msg)
 
 
+def ROSWARN(msg):
+    rospy.logwarn(msg)
+
+
 def calcOrientation(point1: list, point2: list):
-    """Calculate difference between two point and return quarternion
+    """Calculate orientation from point 2 to point 1
 
     Args:
         point1: current point (t)
@@ -43,7 +53,14 @@ def calcOrientation(point1: list, point2: list):
             angle = 0.0
     else:
         angle = np.arctan((point1[1] - point2[1]) / (point1[0] - point2[0]))
-    return quaternion_from_euler(0, 0, angle)
+
+    q = Quaternion()
+    dat = quaternion_from_euler(0, 0, angle)
+    q.x = dat[0]
+    q.y = dat[1]
+    q.z = dat[2]
+    q.w = dat[3]
+    return q
 
 
 def getTF(target_frame: str, source_frame: str):
@@ -70,34 +87,73 @@ def toRad(degree: int):
 
 class Corner:
     def __init__(self):
+        self.is_configured = [False for i in range(0, 5)]
         self.corner = PoseStamped()
         self.waypoints = []
+        self.point_in = PoseStamped()
+        self.point_out = PoseStamped()
 
     def get_euler_angle(self):
         """Returns the eualer angle of the corner"""
-        q = self.corner.pose.orientation
-        q = [q.x, q.y, q.z, q.w]
-        return euler_from_quaternion(q)[2]
+        if self.is_configured[CORNER_ORIENTATION]:
+            q = [
+                self.corner.pose.orientation.x,
+                self.corner.pose.orientation.y,
+                self.corner.pose.orientation.z,
+                self.corner.pose.orientation.w,
+            ]
+
+            return euler_from_quaternion(q)[2]
+        else:
+            ROSWARN("No orientation configured")
+            return
 
     def get_quaternion(self):
-        return self.corner.pose.orientation
+        if self.is_configured[CORNER_ORIENTATION]:
+            return self.corner.pose.orientation
+        else:
+            ROSWARN("No orientation configured")
+            return
 
     def get_corner_location(self):
         """Returns the list of x, y position"""
-        return [self.corner.pose.position.x, self.corner.pose.position.y]
+        if self.is_configured[CORNER_LOCATION]:
+            return [self.corner.pose.position.x, self.corner.pose.position.y]
+        else:
+            ROSWARN("No location configured")
 
     def get_waypoint_list(self):
         """Returns waypoint list of the corner"""
-        return self.waypoints
+        if self.is_configured[WAYPOINT]:
+            return self.waypoints
+        else:
+            ROSWARN("No waypoint configured")
+
+    def set_point_in(self, position: list, orientation: Quaternion):
+        self.point_in.pose.position.x = position[0]
+        self.point_in.pose.position.y = position[1]
+        self.point_in.pose.position.z = 0.0
+        self.point_in.pose.orientation = orientation
+        self.is_configured[POINT_IN] = True
+
+    def set_point_out(self, position: list, orientation: Quaternion):
+        self.point_out.pose.position.x = position[0]
+        self.point_out.pose.position.y = position[1]
+        self.point_out.pose.position.z = 0.0
+        self.point_out.pose.orientation = orientation
+        self.is_configured[POINT_OUT] = True
 
     def set_corner_location(self, location: list):
         """Set x, y location"""
         self.corner.pose.position.x = location[0]
         self.corner.pose.position.y = location[1]
+        self.corner.pose.position.z = 0.0
+        self.is_configured[CORNER_LOCATION] = True
 
     def set_corner_orientation(self, orientation: Quaternion):
         """Set corner orientation"""
         self.corner.pose.orientation = orientation
+        self.is_configured[CORNER_ORIENTATION] = True
 
     def set_corner_angle(self, angle: float):
         """Set corner angle (degree)"""
@@ -107,10 +163,72 @@ class Corner:
             self.corner.pose.orientation.z,
             self.corner.pose.orientation.w,
         ] = quaternion_from_euler(0, 0, angle)
+        self.is_configured[CORNER_LOCATION] = True
 
-    def set_waypoints(self, waypoints: list):
+    def set_waypoints(self, radius: int, stepsize: int):
         """Set waypont list"""
-        self.waypoints = waypoints
+
+        if self.is_configured[WAYPOINT]:
+            ROSWARN("Overwriting previous waypoint")
+
+        start_angle = [
+            self.point_in.pose.orientation.x,
+            self.point_in.pose.orientation.y,
+            self.point_in.pose.orientation.z,
+            self.point_in.pose.orientation.w,
+        ]
+        start_angle = euler_from_quaternion(start_angle)[2]
+
+        end_angle = [
+            self.point_out.pose.orientation.x,
+            self.point_out.pose.orientation.y,
+            self.point_out.pose.orientation.z,
+            self.point_out.pose.orientation.w,
+        ]
+        end_angle = euler_from_quaternion(end_angle)[2]
+        if start_angle > end_angle:  # clockwise
+
+            rads = np.arange(end_angle, start_angle, toRad(stepsize))
+
+            # Create circular waypoints
+            center = self.get_corner_location()
+            for theta in rads:
+                point = PoseStamped()
+                point.pose.position.x, point.pose.position.y, point.pose.position.z = [
+                    center[0] + radius * np.cos(theta),
+                    center[1] + radius * np.sin(theta),
+                    0.0,
+                ]
+                [
+                    point.pose.orientation.x,
+                    point.pose.orientation.y,
+                    point.pose.orientation.z,
+                    point.pose.orientation.w,
+                ] = quaternion_from_euler(0, 0, (theta - np.pi / 2.0))
+                self.waypoints.append(point)
+
+        else:  # counterclockwise
+            rads = np.arange(start_angle, end_angle, toRad(stepsize))
+
+            # Create circular waypoints
+            center = self.get_corner_location()
+            for theta in rads:
+                point = PoseStamped()
+                point.pose.position.x, point.pose.position.y, point.pose.position.z = [
+                    center[0] + radius * np.cos(theta),
+                    center[1] + radius * np.sin(theta),
+                    0.0,
+                ]
+
+                [
+                    point.pose.orientation.x,
+                    point.pose.orientation.y,
+                    point.pose.orientation.z,
+                    point.pose.orientation.w,
+                ] = quaternion_from_euler(0, 0, (theta + np.pi / 2.0))
+                self.waypoints.append(point)
+
+        self.is_configured[WAYPOINT] = True
 
 
 class CornerHandler:
@@ -262,9 +380,8 @@ class CornerHandler:
                 self.corners.append(i)
 
         if self.corners == []:
-            self.extracted = False
-        else:
-            self.extracted = True
+            ROSINFO("No corners detected. Shutting down...")
+            return False
 
         # Save corners for debug
         # with open("corners.txt", "w") as fileWrite:
@@ -297,7 +414,79 @@ class CornerHandler:
             self.cornerMarkers.markers.append(marker)
 
         self.pub_c_markers.publish(self.cornerMarkers)
-        return self.extracted
+        return True
+
+    def cbGlobalPath(self, path):
+
+        if self.is_waypoint(self.currentGoal):
+            return
+
+        ROSINFO("Received Global Path")
+        x, y = [], []
+
+        # Delete Existing waypoints
+        delete_marker = MarkerArray()
+        marker = Marker()
+        marker.id = 0
+        marker.action = Marker.DELETEALL
+        delete_marker.markers.append(marker)
+        self.pub_w_markers.publish(delete_marker)
+        del delete_marker
+
+        self.inRangeCorners = []
+
+        # Save new global path
+        for data in path.poses:
+            x.append(data.pose.position.x)
+            y.append(data.pose.position.y)
+
+        tempList = []
+        for i in range(0, len(x)):
+            tempList.append([x[i], y[i]])
+
+        self.g_path = tempList[:]
+
+        # Create new waypoint
+        self.waypointMarker = MarkerArray()
+
+        inRangeCorners = self.checkPath()
+        if inRangeCorners == []:
+            ROSINFO("No corners along the global path")
+            return
+        ROSINFO("Creating waypoint for " + str(len(inRangeCorners)) + " corners")
+
+        # Set new waypoint array
+        for corner in inRangeCorners:
+            corner.set_waypoints(self.CORNER_AVOID_RADIUS, self.WAYPOINT_STEPSIZE)
+            self.inRangeCorners.append(corner)
+
+        self.markWaypoint()
+
+    def cbGlobalGoal(self, goal):
+        ROSINFO("Received Global Goal")
+        self.currentGoal = goal.pose
+        if self.is_waypoint(goal):
+            return
+        else:
+            self.global_goal = goal
+        return
+
+    def checkDistance(self, corners: list):
+        """Check distance between robot and corner.
+
+        Args:
+            corner: [x, y] value of target point
+
+        Return:
+
+        """
+        currentLoc = self.getRobotLocation()
+
+        # for corner in corners:
+        #     if calcDistance(corner, self.getRobotLocation()) < 0.2:
+        #         self.filterWaypoint(corner)
+
+        return
 
     def getRobotLocation(self):
         """Return the current location of robot.
@@ -318,18 +507,37 @@ class CornerHandler:
         inRangeCorners = []
         for corner in self.corners:
             for i in range(0, len(self.g_path)):
-                path = self.g_path[i]
+                p_in = self.g_path[i]
 
-                if calcDistance(corner, path) < self.CORNER_DIST_THRES:
+                if calcDistance(corner, p_in) < self.CORNER_DIST_THRES:
                     point = Corner()
                     point.set_corner_location(corner)
+
+                    # TODO: Find point_in, point_out
+
+                    # The point path is point_in
+                    # Calculate orientation of point_in
                     if i < len(self.g_path) - 1:
                         nextPathPoint = self.g_path[i + 1]
-                        angle = calcOrientation(nextPathPoint, path)
+                        angle = calcOrientation(nextPathPoint, p_in)
                     else:
-                        prevPathPoint = self.g_path[i - 1]
-                        angle = calcOrientation(path, prevPathPoint)
-                    point.set_corner_angle(angle)
+                        # if pint_in is the last point of the global plan
+                        # there is no need to avoid the corner
+                        continue
+
+                    point.set_point_in(p_in, angle)
+
+                    # Now find point_out
+                    for j in range(i, len(self.g_path)):
+                        p_out = self.g_path[j]
+                        if calcDistance(corner, p_out) > self.CORNER_DIST_THRES and calcDistance(p_in, p_out) > self.CORNER_AVOID_RADIUS / sqrt(2):
+                            if j < len(self.g_path) - 1:
+                                nextPathPoint = self.g_path[j + 1]
+                                angle = calcOrientation(nextPathPoint, p_out)
+                            point.set_point_out(p_out, angle)
+                            break
+
+                    # Save corner
                     inRangeCorners.append(point)
                     break
 
@@ -355,150 +563,72 @@ class CornerHandler:
                     continue
         return False
 
-    def cbGlobalPath(self, path):
-        ROSINFO("Received Global Path")
-        x, y = [], []
-
-        if self.is_waypoint(self.currentGoal):
-            ROSINFO("Received goal belongs to waypoint array")
-            return
-
-        # Delete Existing waypoints
-        delete_marker = MarkerArray()
-        marker = Marker()
-        marker.id = 0
-        marker.action = Marker.DELETEALL
-        delete_marker.markers.append(marker)
-        self.pub_w_markers.publish(delete_marker)
-        self.inRangeCorners = []
-
-        # Save new global path
-        for data in path.poses:
-            x.append(data.pose.position.x)
-            y.append(data.pose.position.y)
-
-        tempList = []
-        for i in range(0, len(x)):
-            tempList.append([x[i], y[i]])
-
-        self.g_path = tempList[:]
-
-        # Create new waypoint
-        self.waypointMarker = MarkerArray()
-
-        inRangeCorners = self.checkPath()
-
-        ROSINFO("Creating waypoint for " + str(len(inRangeCorners)) + " corners")
-
-        # Set new waypoint array
-        for corner in inRangeCorners:
-            waypoint = self.createWaypoint(corner, self.CORNER_AVOID_RADIUS, self.WAYPOINT_STEPSIZE)
-            corner.set_waypoints(waypoint)
-            self.inRangeCorners.append(corner)
-
-        self.pub_w_markers.publish(self.waypointMarker)
-
-    def cbGlobalGoal(self, goal):
-        ROSINFO("Received Global Goal")
-        self.currentGoal = goal.pose
-        if self.is_waypoint(goal):
-            return
-        else:
-            self.global_goal = goal
-
-    def checkDistance(self, corners: list):
-        """Check distance between robot and corner.
-
-        Args:
-            corner: [x, y] value of target point
-
-        Return:
-
-        """
-        currentLoc = self.getRobotLocation()
-
-        # for corner in corners:
-        #     if calcDistance(corner, self.getRobotLocation()) < 0.2:
-        #         self.filterWaypoint(corner)
-
-        return
-
-    def filterWaypoint(self, waypointSet: list):
-        """Discard unvalid waypoints
-
-        Args:
-            waypointSet: Set of corner and waypoints [corner, waypoints]
-
-        Return:
-            Valid wayoints of the corner
-        """
-
-        # TODO:
-
-        return
-
-    # TODO: Calculate Arc Length
-    def checkArcLength(self, waypointSet: list):
-        """Calculate arc length of area based on index.
-
-        Args:
-            waypointSet: Set of corner and waypoints [corner, waypoints]
-
-        """
-
-        return
-
-    def createWaypoint(self, corner: Corner, radius: int, stepsize: int):
-
-        waypoint = []
-        rads = np.arange(-3.14, 3.14, toRad(stepsize))
-
-        # Create circular waypoints
-        center = corner.get_corner_location()
-        for theta in rads:
-            point = PoseStamped()
-            point.pose.position.x, point.pose.position.y, point.pose.position.z = [
-                center[0] + radius * np.cos(theta),
-                center[1] + radius * np.sin(theta),
-                0.0,
-            ]
-            if -np.pi / 2 <= (corner.get_euler_angle() - (theta + np.pi / 2.0)) <= np.pi / 2:
-                [
-                    point.pose.orientation.x,
-                    point.pose.orientation.y,
-                    point.pose.orientation.z,
-                    point.pose.orientation.w,
-                ] = quaternion_from_euler(0, 0, (theta + np.pi / 2.0))
-            else:
-                [
-                    point.pose.orientation.x,
-                    point.pose.orientation.y,
-                    point.pose.orientation.z,
-                    point.pose.orientation.w,
-                ] = quaternion_from_euler(0, 0, (theta - np.pi / 2.0))
-            waypoint.append(point)
-
+    def markWaypoint(self):
+        waypointMarker = MarkerArray()
         # Create Waypoint Markers
-        for i in range(0, len(waypoint)):
+        for i in range(0, len(self.inRangeCorners)):
+            corner = self.inRangeCorners[i]
+
+            id = 0
+            loc = corner.get_corner_location()
             marker = Marker()
             marker.header.frame_id = "map"
             # marker.header.stamp = time
-            marker.ns = "waypoint" + str(center[0] + center[1])
-            marker.id = i
-            marker.type = Marker.ARROW
+            marker.ns = "waypoint" + str(i)
+            marker.id = id
+            marker.type = Marker.CYLINDER
             marker.action = Marker.ADD
-            marker.scale.x = 0.1
-            marker.scale.y = 0.05
-            marker.scale.z = 0.05
-            marker.pose.position = waypoint[i].pose.position
+            marker.scale.x = 0.2
+            marker.scale.y = 0.2
+            marker.scale.z = 0.1
+            marker.pose.position = corner.point_in.pose.position
             marker.lifetime = rospy.Duration(0)
-            marker.pose.orientation = waypoint[i].pose.orientation
+            marker.pose.orientation = corner.point_in.pose.orientation
+            marker.color.r, marker.color.g, marker.color.b = 0, 0, 1
+            marker.color.a = 0.7
+            waypointMarker.markers.append(marker)
+            id += 1
+
+            for point in corner.get_waypoint_list():
+                marker = Marker()
+                marker.header.frame_id = "map"
+                # marker.header.stamp = time
+                marker.ns = "waypoint" + str(i)
+                marker.id = id
+                marker.type = Marker.ARROW
+                marker.action = Marker.ADD
+                marker.scale.x = 0.1
+                marker.scale.y = 0.03
+                marker.scale.z = 0.03
+                marker.pose.position = point.pose.position
+                marker.lifetime = rospy.Duration(0)
+                marker.pose.orientation = point.pose.orientation
+                marker.color.r, marker.color.g, marker.color.b = 1, 0, 0
+                marker.color.a = 0.7
+                waypointMarker.markers.append(marker)
+                id += 1
+
+            marker = Marker()
+            marker.header.frame_id = "map"
+            # marker.header.stamp = time
+            marker.ns = "waypoint" + str(i)
+            marker.id = id
+            marker.type = Marker.CYLINDER
+            marker.action = Marker.ADD
+            marker.scale.x = 0.2
+            marker.scale.y = 0.2
+            marker.scale.z = 0.1
+            marker.pose.position = corner.point_out.pose.position
+            marker.lifetime = rospy.Duration(0)
+            marker.pose.orientation = corner.point_out.pose.orientation
             marker.color.r, marker.color.g, marker.color.b = 1, 0, 0
             marker.color.a = 0.7
-            self.waypointMarker.markers.append(marker)
-        return waypoint
+            waypointMarker.markers.append(marker)
 
-    def setWaypoint(self, point: PoseStamped):
+        self.pub_w_markers.publish(waypointMarker)
+        return
+
+    def Waypoint(self, point: PoseStamped):
         """Set waypoint and send to the actionlib, and wait until the action is done.
 
         Args:
@@ -514,7 +644,3 @@ class CornerHandler:
         client.wait_for_result()
 
         return
-
-    def prepare(self):
-        if not self.extractCorners():
-            ROSERR("Extraction Failed")
