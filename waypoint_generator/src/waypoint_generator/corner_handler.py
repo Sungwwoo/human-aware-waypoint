@@ -38,21 +38,41 @@ def ROSWARN(msg):
     rospy.logwarn(msg)
 
 
-def calcOrientation(point1: list, point2: list):
-    """Calculate orientation from point 2 to point 1
+def calcOrientation(prev: list, current: list, ret_deg=False):
+    """Calculate orientation from previous point to current point
 
     Args:
-        point1: current point (t)
-        point2: previous point (t -1)"""
-    if point1[0] - point2[0] == 0:
-        if (point1[1] - point2[1]) > 0:
+        current point (t)
+        previous point (t -1)"""
+    # unit_vector = np.array([1, 0])
+    # input_vector = np.array([point2[0] - point1[0], point2[1] - point1[1]])
+    # angle = np.arccos(input_vector.dot(unit_vector) / sqrt(input_vector[0] ** 2 + input_vector[1] ** 2))
+
+    dx = current[0] - prev[0]
+    dy = current[1] - prev[1]
+
+    if dx > 0:
+        if dy > 0:  # 1
+            angle = np.arctan((current[1] - prev[1]) / (current[0] - prev[0]))
+        else:  # 4
+            angle = np.arctan((current[1] - prev[1]) / (current[0] - prev[0]))
+
+    elif dx < 0:
+        if dy > 0:  # 2
+            angle = np.pi + np.arctan((current[1] - prev[1]) / (current[0] - prev[0]))
+        else:  # 3
+            angle = -np.pi + np.arctan((current[1] - prev[1]) / (current[0] - prev[0]))
+
+    else:
+        if (current[1] - prev[1]) > 0:
             angle = toRad(90)
-        elif (point1[1] - point2[1]) < 0:
+        elif (current[1] - prev[1]) < 0:
             angle = toRad(-90)
         else:
             angle = 0.0
-    else:
-        angle = np.arctan((point1[1] - point2[1]) / (point1[0] - point2[0]))
+
+    if ret_deg:
+        return angle
 
     q = Quaternion()
     dat = quaternion_from_euler(0, 0, angle)
@@ -85,6 +105,10 @@ def toRad(degree: int):
     return float(degree) * np.pi / 180.0
 
 
+def toDegree(rad: float):
+    return rad / np.pi * 180.0
+
+
 class Corner:
     def __init__(self):
         self.is_configured = [False for i in range(0, 5)]
@@ -92,6 +116,7 @@ class Corner:
         self.waypoints = []
         self.point_in = PoseStamped()
         self.point_out = PoseStamped()
+        self.direction = 0  # 0: clockwise, 1: counterclockwise
 
     def get_euler_angle(self):
         """Returns the eualer angle of the corner"""
@@ -186,19 +211,30 @@ class Corner:
             self.point_out.pose.orientation.w,
         ]
         end_angle = euler_from_quaternion(end_angle)[2]
-        if start_angle > end_angle:  # clockwise
 
-            rads = np.arange(end_angle, start_angle, toRad(stepsize))
+        # print("Angle_in :", toDegree(start_angle), "\nAngle_out:", toDegree(end_angle), "Dir: ", self.direction)
+        if self.direction == 0:  # clockwise
+
+            if start_angle > end_angle:
+                rads = np.arange(start_angle, end_angle, -toRad(stepsize))
+
+            else:
+                if start_angle < 0:
+                    rads = np.arange(start_angle, -3.14, -toRad(stepsize))
+                    tmp = np.arange(3.14, end_angle, -toRad(stepsize))
+                    rads = np.append(rads, tmp)
 
             # Create circular waypoints
             center = self.get_corner_location()
             for theta in rads:
+
                 point = PoseStamped()
                 point.pose.position.x, point.pose.position.y, point.pose.position.z = [
                     center[0] + radius * np.cos(theta),
                     center[1] + radius * np.sin(theta),
                     0.0,
                 ]
+
                 [
                     point.pose.orientation.x,
                     point.pose.orientation.y,
@@ -207,12 +243,27 @@ class Corner:
                 ] = quaternion_from_euler(0, 0, (theta - np.pi / 2.0))
                 self.waypoints.append(point)
 
-        else:  # counterclockwise
-            rads = np.arange(start_angle, end_angle, toRad(stepsize))
+        else:  # Counterclockwise
+            if start_angle > end_angle:
+                if start_angle > 0:
+                    rads = np.arange(start_angle, 3.14, toRad(stepsize))
+                    tmp = np.arange(-3.14, end_angle, toRad(stepsize))
+                    rads = np.append(rads, tmp)
+                else:
+                    rads = np.arange(start_angle, 0, toRad(stepsize))
+                    tmp = np.arange(0, end_angle, toRad(stepsize))
+                    rads = np.append(rads, tmp)
+                    if end_angle < 0:
+                        tmp = np.arange(-3.14, end_angle, toRad(stepsize))
+                        rads = np.append(rads, tmp)
+
+            else:
+                rads = np.arange(start_angle, end_angle, toRad(stepsize))
 
             # Create circular waypoints
             center = self.get_corner_location()
             for theta in rads:
+
                 point = PoseStamped()
                 point.pose.position.x, point.pose.position.y, point.pose.position.z = [
                     center[0] + radius * np.cos(theta),
@@ -227,8 +278,13 @@ class Corner:
                     point.pose.orientation.w,
                 ] = quaternion_from_euler(0, 0, (theta + np.pi / 2.0))
                 self.waypoints.append(point)
-
         self.is_configured[WAYPOINT] = True
+
+    def set_direction(self, dir: int):
+        if dir == 0 or dir == 1:
+            self.direction = dir
+        else:
+            ROSWARN("Invalid direction.")
 
 
 class CornerHandler:
@@ -245,7 +301,7 @@ class CornerHandler:
         self.global_goal_name = rospy.get_param("/global_goal_name", default="/move_base/current_goal")
         self.CORNER_DIST_THRES = rospy.get_param("corner_avoid/corner_distance_threshold", default=0.7)
         self.CORNER_AVOID_RADIUS = rospy.get_param("corner_avoid/radius", default=1.0)
-        self.WAYPOINT_STEPSIZE = rospy.get_param("corner_avoid/step_size", default=15)
+        self.WAYPOINT_STEPSIZE = rospy.get_param("corner_avoid/step_size", default=25)
 
         ROSINFO("Parameter loaded")
 
@@ -290,6 +346,14 @@ class CornerHandler:
         marker.action = Marker.DELETEALL
         delete_marker.markers.append(marker)
         self.pub_c_markers.publish(delete_marker)
+        del delete_marker
+
+        delete_marker = MarkerArray()
+        marker = Marker()
+        marker.id = 0
+        marker.action = Marker.DELETEALL
+        delete_marker.markers.append(marker)
+        self.pub_w_markers.publish(delete_marker)
         del delete_marker
 
         if self.show_image:
@@ -506,38 +570,59 @@ class CornerHandler:
         """
         inRangeCorners = []
         for corner in self.corners:
+            point_found = False
             for i in range(0, len(self.g_path)):
                 p_in = self.g_path[i]
 
-                if calcDistance(corner, p_in) < self.CORNER_DIST_THRES:
-                    point = Corner()
-                    point.set_corner_location(corner)
+                point = Corner()
+                if abs(calcDistance(corner, p_in) - self.CORNER_AVOID_RADIUS) < 0.01:
 
-                    # TODO: Find point_in, point_out
-
-                    # The point path is point_in
                     # Calculate orientation of point_in
                     if i < len(self.g_path) - 1:
-                        nextPathPoint = self.g_path[i + 1]
-                        angle = calcOrientation(nextPathPoint, p_in)
+                        angle_in = calcOrientation(corner, p_in)
                     else:
-                        # if pint_in is the last point of the global plan
+                        # if point_in is the last point of the global plan
                         # there is no need to avoid the corner
-                        continue
-
-                    point.set_point_in(p_in, angle)
+                        break
 
                     # Now find point_out
-                    for j in range(i, len(self.g_path)):
+                    for j in range(i + 1, len(self.g_path)):
                         p_out = self.g_path[j]
-                        if calcDistance(corner, p_out) > self.CORNER_DIST_THRES and calcDistance(p_in, p_out) > self.CORNER_AVOID_RADIUS / sqrt(2):
-                            if j < len(self.g_path) - 1:
-                                nextPathPoint = self.g_path[j + 1]
-                                angle = calcOrientation(nextPathPoint, p_out)
-                            point.set_point_out(p_out, angle)
+                        if abs(calcDistance(corner, p_out) - self.CORNER_AVOID_RADIUS) < 0.01 and calcDistance(p_in, p_out) > (
+                            self.CORNER_AVOID_RADIUS / sqrt(2)
+                        ):
+                            angle_out = calcOrientation(corner, p_out)
+                            point_found = True
                             break
 
-                    # Save corner
+                if point_found:
+                    point.set_corner_location(corner)
+                    point.set_point_in(p_in, angle_in)
+                    point.set_point_out(p_out, angle_out)
+
+                    # Find direction
+                    middle_idx = int((i + j) / 2)
+                    p_mid = self.g_path[middle_idx]
+                    angle_in = calcOrientation(corner, p_in, True)
+                    angle_mid = calcOrientation(corner, p_mid, True)
+
+                    if angle_in < 0:
+                        angle_in = 2 * np.pi + angle_in
+                    if angle_mid < 0:
+                        angle_mid = 2 * np.pi + angle_mid
+                    print(angle_in, angle_mid)
+                    if angle_in > angle_mid:
+                        if angle_in > np.pi and angle_mid < np.pi:
+                            point.set_direction(1)
+                        else:
+                            point.set_direction(0)
+
+                    else:  # Counterclockwise
+                        if angle_in < np.pi and angle_mid > np.pi:
+                            point.set_direction(0)
+                        else:
+                            point.set_direction(1)
+
                     inRangeCorners.append(point)
                     break
 
@@ -566,10 +651,10 @@ class CornerHandler:
     def markWaypoint(self):
         waypointMarker = MarkerArray()
         # Create Waypoint Markers
+        id = 0
         for i in range(0, len(self.inRangeCorners)):
             corner = self.inRangeCorners[i]
 
-            id = 0
             loc = corner.get_corner_location()
             marker = Marker()
             marker.header.frame_id = "map"
@@ -624,6 +709,7 @@ class CornerHandler:
             marker.color.r, marker.color.g, marker.color.b = 1, 0, 0
             marker.color.a = 0.7
             waypointMarker.markers.append(marker)
+            id += 1
 
         self.pub_w_markers.publish(waypointMarker)
         return
