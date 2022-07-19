@@ -280,9 +280,9 @@ class Corner:
                 self.waypoints.append(point)
         self.is_configured[WAYPOINT] = True
 
-    def set_direction(self, dir: int):
-        if dir == 0 or dir == 1:
-            self.direction = dir
+    def set_direction(self, direction: int):
+        if direction == 0 or direction == 1:
+            self.direction = direction
         else:
             ROSWARN("Invalid direction.")
 
@@ -601,7 +601,7 @@ class CornerHandler:
                     point.set_point_out(p_out, angle_out)
 
                     # Find direction
-                    middle_idx = int((i + j) / 2)
+                    middle_idx = int(i + 1)
                     p_mid = self.g_path[middle_idx]
                     angle_in = calcOrientation(corner, p_in, True)
                     angle_mid = calcOrientation(corner, p_mid, True)
@@ -610,19 +610,15 @@ class CornerHandler:
                         angle_in = 2 * np.pi + angle_in
                     if angle_mid < 0:
                         angle_mid = 2 * np.pi + angle_mid
+
                     print(angle_in, angle_mid)
                     if angle_in > angle_mid:
-                        if angle_in > np.pi and angle_mid < np.pi:
-                            point.set_direction(1)
-                        else:
-                            point.set_direction(0)
+                        direction = 0
 
                     else:  # Counterclockwise
-                        if angle_in < np.pi and angle_mid > np.pi:
-                            point.set_direction(0)
-                        else:
-                            point.set_direction(1)
-
+                        direction = 1
+                    point.set_direction(direction)
+                    print(direction)
                     inRangeCorners.append(point)
                     break
 
