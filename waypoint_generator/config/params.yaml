@@ -20,10 +20,10 @@ corner_avoid:
   corner_distance_threshold: 0.7
 
   # Radius of avoiding area
-  radius: 1.5
+  radius: 1.4
 
   # Step size for creating waypoints
-  step_size: 15 # Degree
+  step_size: 30 # Degree
 
 # global_plan topic name
 global_plan_name: /move_base/NavfnROS/plan

@@ -297,8 +297,8 @@ class CornerHandler:
         self.global_plan_name = rospy.get_param("/global_plan_name", default="/move_base/NavfnROS/plan")
         self.global_goal_name = rospy.get_param("/global_goal_name", default="/move_base/current_goal")
         self.CORNER_DIST_THRES = rospy.get_param("corner_avoid/corner_distance_threshold", default=0.7)
-        self.CORNER_AVOID_RADIUS = rospy.get_param("corner_avoid/radius", default=1.0)
-        self.WAYPOINT_STEPSIZE = rospy.get_param("corner_avoid/step_size", default=25)
+        self.CORNER_AVOID_RADIUS = rospy.get_param("corner_avoid/radius", default=1.4)
+        self.WAYPOINT_STEPSIZE = rospy.get_param("corner_avoid/step_size", default=30)
 
         # tf listner
         self.tfBuffer = tf2_ros.Buffer()
