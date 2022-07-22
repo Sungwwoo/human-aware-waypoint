@@ -8,4 +8,5 @@ if __name__ == "__main__":
         exit()
 
     while not rospy.is_shutdown():
-        rospy.sleep(1)
+        cornerHandler.checkDistance()
+        rospy.sleep(0.3)

@@ -1,9 +1,6 @@
 #! /usr/bin/env python3
 
 from math import sqrt, cos, sin
-from multiprocessing.spawn import get_executable
-import sys
-from tomlkit import string
 import yaml
 import heapq
 import rospy
@@ -83,20 +80,6 @@ def calcOrientation(prev: list, current: list, ret_deg=False):
     return q
 
 
-def getTF(target_frame: str, source_frame: str):
-    # tf listner
-    tfBuffer = tf2_ros.Buffer()
-    tfListner = tf2_ros.TransformListener(tfBuffer)
-
-    while True:
-        try:
-            trans = tfBuffer.lookup_transform(target_frame, source_frame, rospy.Time())
-            return trans
-        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
-            rospy.sleep(1)
-            continue
-
-
 def calcDistance(a: list, b: list):
     return sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
 
@@ -117,6 +100,10 @@ class Corner:
         self.point_in = PoseStamped()
         self.point_out = PoseStamped()
         self.direction = 0  # 0: clockwise, 1: counterclockwise
+        self.g_path_idx = -1
+
+    def __lt__(self, other):
+        return self.g_path_idx < other.g_path_idx
 
     def get_euler_angle(self):
         """Returns the eualer angle of the corner"""
@@ -144,6 +131,13 @@ class Corner:
         """Returns the list of x, y position"""
         if self.is_configured[CORNER_LOCATION]:
             return [self.corner.pose.position.x, self.corner.pose.position.y]
+        else:
+            ROSWARN("No location configured")
+
+    def get_point_in_location(self):
+        """Returns the list of x, y position"""
+        if self.is_configured[CORNER_LOCATION]:
+            return [self.point_in.pose.position.x, self.point_in.pose.position.y]
         else:
             ROSWARN("No location configured")
 
@@ -189,6 +183,9 @@ class Corner:
             self.corner.pose.orientation.w,
         ] = quaternion_from_euler(0, 0, angle)
         self.is_configured[CORNER_LOCATION] = True
+
+    def set_idx(self, idx: int):
+        self.g_path_idx = idx
 
     def set_waypoints(self, radius: int, stepsize: int):
         """Set waypont list"""
@@ -303,6 +300,10 @@ class CornerHandler:
         self.CORNER_AVOID_RADIUS = rospy.get_param("corner_avoid/radius", default=1.0)
         self.WAYPOINT_STEPSIZE = rospy.get_param("corner_avoid/step_size", default=25)
 
+        # tf listner
+        self.tfBuffer = tf2_ros.Buffer()
+        self.tfListner = tf2_ros.TransformListener(self.tfBuffer)
+
         ROSINFO("Parameter loaded")
 
         # Load map image
@@ -335,8 +336,8 @@ class CornerHandler:
         self.waypointMarker = MarkerArray()
         self.pub_c_markers = rospy.Publisher("corner_markers", MarkerArray, queue_size=10)
         self.pub_w_markers = rospy.Publisher("waypoint_markers", MarkerArray, queue_size=10)
-        self.sub_global_path = rospy.Subscriber(self.global_plan_name, Path, self.cbGlobalPath)
-        self.sub_global_goal = rospy.Subscriber(self.global_goal_name, PoseStamped, self.cbGlobalGoal)
+        self.sub_global_path = rospy.Subscriber(self.global_plan_name, Path, self.cbGlobalPath, queue_size=1)
+        self.sub_global_goal = rospy.Subscriber(self.global_goal_name, PoseStamped, self.cbGlobalGoal, queue_size=1)
         rospy.sleep(1)
 
         ROSINFO("Deleting existing RVIZ markers")
@@ -361,6 +362,15 @@ class CornerHandler:
             cv.resizeWindow("Contour", width=1000, height=1000)
             cv.imshow("Contour", self.final_img), cv.waitKey(0)
         rospy.loginfo("Corner Detector Initialized")
+
+    def getTF(self, target_frame: str, source_frame: str):
+        while True:
+            try:
+                trans = self.tfBuffer.lookup_transform(target_frame, source_frame, rospy.Time())
+                return trans
+            except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
+                rospy.sleep(1)
+                continue
 
     def extractCorners(self):
         """Extract corners of given map."""
@@ -422,12 +432,13 @@ class CornerHandler:
 
         for i in cntPoints:
             isValid = True
+
             for j in cnvxPoints:
                 if sqrt((i[0] - j[0]) ** 2 + (i[1] - j[1]) ** 2) < self.DISTANCE_THRESHOLD:
                     isValid = False
                     break
-            if isValid:
 
+            if isValid:
                 i = i.astype(np.float32)
 
                 if self.show_image:
@@ -481,8 +492,7 @@ class CornerHandler:
         return True
 
     def cbGlobalPath(self, path):
-
-        if self.is_waypoint(self.currentGoal):
+        if self.is_waypoint(self.current_goal):
             return
 
         ROSINFO("Received Global Path")
@@ -527,15 +537,18 @@ class CornerHandler:
         self.markWaypoint()
 
     def cbGlobalGoal(self, goal):
-        ROSINFO("Received Global Goal")
-        self.currentGoal = goal.pose
+        self.current_goal = goal
         if self.is_waypoint(goal):
+            ROSINFO("Received Waypoint")
             return
+
         else:
             self.global_goal = goal
+
+            ROSINFO("Received Global Goal")
         return
 
-    def checkDistance(self, corners: list):
+    def checkDistance(self):
         """Check distance between robot and corner.
 
         Args:
@@ -544,12 +557,16 @@ class CornerHandler:
         Return:
 
         """
-        currentLoc = self.getRobotLocation()
-
-        # for corner in corners:
-        #     if calcDistance(corner, self.getRobotLocation()) < 0.2:
-        #         self.filterWaypoint(corner)
-
+        for i in range(0, len(self.inRangeCorners)):
+            corner = self.inRangeCorners[i]
+            dist = calcDistance(corner.get_point_in_location(), self.getRobotLocation())
+            if dist < 1:
+                ROSINFO("Encounterd Corner " + str(self.inRangeCorners.index(corner)))
+                waypoints = corner.get_waypoint_list()
+                for point in waypoints[2:-2]:
+                    ROSINFO("Moving to waypoint... " + str(waypoints.index(point) + 1) + "/" + str(len(waypoints)))
+                    self.pubGoal(point)
+                self.pubGoal(self.global_goal)
         return
 
     def getRobotLocation(self):
@@ -558,7 +575,7 @@ class CornerHandler:
         Return:
             [Location_x, Location_y] based on map frame
         """
-        loc = getTF("map", "base_link")
+        loc = self.getTF("map", "base_link")
         self.robotLocation = [loc.transform.translation.x, loc.transform.translation.y]
         return self.robotLocation
 
@@ -596,6 +613,7 @@ class CornerHandler:
                             break
 
                 if point_found:
+                    point.set_idx(i)
                     point.set_corner_location(corner)
                     point.set_point_in(p_in, angle_in)
                     point.set_point_out(p_out, angle_out)
@@ -611,17 +629,15 @@ class CornerHandler:
                     if angle_mid < 0:
                         angle_mid = 2 * np.pi + angle_mid
 
-                    print(angle_in, angle_mid)
                     if angle_in > angle_mid:
                         direction = 0
 
                     else:  # Counterclockwise
                         direction = 1
                     point.set_direction(direction)
-                    print(direction)
                     inRangeCorners.append(point)
                     break
-
+        heapq.heapify(inRangeCorners)
         return inRangeCorners
 
     def is_waypoint(self, goal: PoseStamped):
@@ -633,20 +649,31 @@ class CornerHandler:
         Returns:
             Boolean
         """
+        # print(
+        #     "Received Goal: {}, {}".format(
+        #         round(goal.pose.position.x, 3),
+        #         round(goal.pose.position.y, 3),
+        #     )
+        # )
 
         if self.inRangeCorners == []:
             return False
         for corner in self.inRangeCorners:
             for point in corner.get_waypoint_list():
-                if point.pose == goal:
+                if (
+                    calcDistance(
+                        [round(point.pose.position.x, 3), round(point.pose.position.y, 3)],
+                        [round(goal.pose.position.x, 3), round(goal.pose.position.y, 3)],
+                    )
+                    < 0.005
+                ):
+
                     return True
-                else:
-                    continue
         return False
 
     def markWaypoint(self):
         waypointMarker = MarkerArray()
-        # Create Waypoint Markers
+
         id = 0
         for i in range(0, len(self.inRangeCorners)):
             corner = self.inRangeCorners[i]
@@ -710,7 +737,7 @@ class CornerHandler:
         self.pub_w_markers.publish(waypointMarker)
         return
 
-    def Waypoint(self, point: PoseStamped):
+    def pubGoal(self, point: PoseStamped):
         """Set waypoint and send to the actionlib, and wait until the action is done.
 
         Args:
@@ -721,7 +748,8 @@ class CornerHandler:
 
         goal = MoveBaseGoal()
         goal.target_pose.header.frame_id = "map"
-        goal.target_pose.pose = point
+        goal.target_pose.pose = point.pose
+        # print("Publishing {}, {}".format(goal.target_pose.pose.position.x, goal.target_pose.pose.position.y))
         client.send_goal(goal)
         client.wait_for_result()
 
