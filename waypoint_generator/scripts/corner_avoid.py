@@ -1,3 +1,5 @@
+#! /usr/bin/env python3
+
 import rospy
 from waypoint_generator.corner_handler import CornerHandler
 
