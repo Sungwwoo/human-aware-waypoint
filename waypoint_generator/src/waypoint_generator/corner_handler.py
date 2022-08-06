@@ -11,6 +11,7 @@ from nav_msgs.msg import OccupancyGrid, Path
 from nav_msgs.srv import GetMap
 from geometry_msgs.msg import PoseStamped, Quaternion
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
+import dynamic_reconfigure.client
 import actionlib
 import numpy as np
 import cv2 as cv
@@ -304,6 +305,10 @@ class CornerHandler:
         self.tfBuffer = tf2_ros.Buffer()
         self.tfListner = tf2_ros.TransformListener(self.tfBuffer)
 
+        # actionlib client
+        self.client = actionlib.SimpleActionClient("move_base", MoveBaseAction)
+        self.client.wait_for_server()
+
         ROSINFO("Parameter loaded")
 
         # Load map image
@@ -557,16 +562,26 @@ class CornerHandler:
         Return:
 
         """
+
         for i in range(0, len(self.inRangeCorners)):
             corner = self.inRangeCorners[i]
             dist = calcDistance(corner.get_point_in_location(), self.getRobotLocation())
-            if dist < 1:
+            if dist < 1.5:
+                client = dynamic_reconfigure.client.Client("/move_base/DWAPlannerROS")
+                # ROSINFO("Setting acc_lim_x to 0.1")
+                # prev_acc = rospy.get_param("/move_base/DWAPlannerROS/acc_lim_x")
+                # param = {"acc_lim_x": 0.1}
+                # client.update_configuration(param)
                 ROSINFO("Encounterd Corner " + str(self.inRangeCorners.index(corner)))
                 waypoints = corner.get_waypoint_list()
                 for point in waypoints[2:-2]:
                     ROSINFO("Moving to waypoint... " + str(waypoints.index(point) + 1) + "/" + str(len(waypoints)))
                     self.pubGoal(point)
+
+                # param = {"acc_lim_x": prev_acc}
+                # client.update_configuration(param)
                 self.pubGoal(self.global_goal)
+
         return
 
     def getRobotLocation(self):
@@ -743,14 +758,13 @@ class CornerHandler:
         Args:
             point: [[position], [orientation]]
         """
-        client = actionlib.SimpleActionClient("move_base", MoveBaseAction)
-        client.wait_for_server()
 
         goal = MoveBaseGoal()
         goal.target_pose.header.frame_id = "map"
         goal.target_pose.pose = point.pose
         # print("Publishing {}, {}".format(goal.target_pose.pose.position.x, goal.target_pose.pose.position.y))
-        client.send_goal(goal)
-        client.wait_for_result()
+        self.client.send_goal(goal)
+        while calcDistance([point.pose.position.x, point.pose.position.y], self.getRobotLocation()) > 0.8:
+            continue
 
         return
