@@ -8,7 +8,7 @@
     <arg name="map_file" default="$(find husky_ur3_navigation)/map/doors.yaml"/>
 
     <!-- Launch Node -->
-    <node name="corner_detector" pkg="waypoint_generator" type="corner_handler.py" output="screen">
+    <node name="corner_detector" pkg="waypoint_generator" type="corner_avoid.py" output="screen">
         <param name="map_file" value="$(arg map_file)"/>
     </node>
 

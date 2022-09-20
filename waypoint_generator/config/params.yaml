@@ -17,7 +17,13 @@ corner_detector:
 
 corner_avoid:
   # Corners closer than this value to the global path will be avoided
-  corner_distance_threshold: 0.7
+  corner_distance_threshold: 0.6
+
+  # Radius of avoiding area
+  radius: 1.2
+
+  # Step size for creating waypoints
+  step_size: 20 # Degree
 
 # global_plan topic name
 global_plan_name: /move_base/NavfnROS/plan
