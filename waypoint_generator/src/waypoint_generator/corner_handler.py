@@ -764,7 +764,7 @@ class CornerHandler:
         goal.target_pose.pose = point.pose
         # print("Publishing {}, {}".format(goal.target_pose.pose.position.x, goal.target_pose.pose.position.y))
         self.client.send_goal(goal)
-        while calcDistance([point.pose.position.x, point.pose.position.y], self.getRobotLocation()) > 0.8:
-            continue
-
+        # while calcDistance([point.pose.position.x, point.pose.position.y], self.getRobotLocation()) > 0.8:
+        #     continue
+        self.client.wait_for_result()
         return

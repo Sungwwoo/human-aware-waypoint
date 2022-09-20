@@ -20,7 +20,7 @@ corner_avoid:
   corner_distance_threshold: 0.6
 
   # Radius of avoiding area
-  radius: 1.8
+  radius: 1.2
 
   # Step size for creating waypoints
   step_size: 20 # Degree
