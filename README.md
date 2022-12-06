@@ -11,9 +11,6 @@
  
 4. If the robot enters the possible-collision area, back up the global goal and follow the boundary of the area using sequence of waypoints.
 
-## Process
-### Main Contribution?
-TBD
 ### TODO
 
 - [x] Corner detection
@@ -24,3 +21,4 @@ TBD
 - [X] Create possible-collision areas for doors
 - [X] Check if the robot is entering possible-collision areas
 - [X] Area Avoidance algorithm
+- [ ] Multi-Corner Avoidance
